@@ -146,18 +146,18 @@ func tasksHandler(w http.ResponseWriter, req *http.Request) {
 			}
 			rawArray = append(rawArray, raw)
 		}
-
-		results, err := json.Marshal(rawArray)
-		if err != nil {
-			log.Fatalln(err)
-		}
+		/*
+			results, err := json.Marshal(rawArray)
+			if err != nil {
+				log.Fatalln(err)
+			}*/
 
 		message := map[string]interface{}{
 			"user_name": userName,
 			"task":      currentTask,
 			"results": map[string]interface{}{
-				"payload": payload,
-				"results": results,
+				"payload": taskCases,
+				"results": rawArray,
 			},
 		}
 		bytesRepresentation, err := json.Marshal(message)
@@ -176,11 +176,6 @@ func tasksHandler(w http.ResponseWriter, req *http.Request) {
 			log.Fatalln(err)
 		}
 
-		// var finalResult map[string]interface{}
-		//json.NewDecoder(resp2.Body).Decode(&finalResult)
-		// if resp2.Status == http.StatusBadRequest {
-
-		// }
 		if resp2.StatusCode != http.StatusOK {
 			w.Write([]byte("Solution response status: " + resp2.Status))
 		} else {
