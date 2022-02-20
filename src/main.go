@@ -38,6 +38,34 @@ type taskElement struct {
 	result []int
 }
 
+func main() {
+	flag.StringVar(&solutionAddr, "addr", defSolutionAddr, "Net address of the server \"Solution\"")
+	flag.Parse()
+	if solutionAddr == "test" {
+		debugFlag = true
+
+	}
+	if debugFlag {
+		solutionAddr = testSolutionAddr
+	}
+	fmt.Println("Solution server at: " + solutionAddr)
+
+	if debugFlag {
+		ctx := context.Background()
+		ctxTestServer, cancelTestServer := context.WithCancel(ctx)
+		defer cancelTestServer()
+		go testSolution.StartTestServer(ctxTestServer, testSolutionAddr)
+	}
+
+	http.HandleFunc("/task/", tasksHandler)
+	http.HandleFunc("/tasks/", tasksHandler)
+	fmt.Println("Service is getting up")
+	err := http.ListenAndServe(port, nil)
+	if err != nil {
+		panic(err)
+	}
+}
+
 func tasksHandler(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodGet {
 		http.Error(w, fmt.Sprintf("expect method GET at /tasks/, got %v", req.Method), http.StatusMethodNotAllowed)
@@ -110,6 +138,34 @@ func tasksHandler(w http.ResponseWriter, req *http.Request) {
 }
 
 func processTask(currentTask string) ([]byte, error) {
+	// get cases for the task
+	var taskCases []json.RawMessage
+	err := getCases(currentTask, &taskCases)
+	if err != nil {
+		log.Fatalln(err)
+		return []byte{}, err
+	}
+
+	// solve
+	taskArray := [10]taskElement{}
+	err = parseAndSolve(currentTask, taskCases, &taskArray)
+	if err != nil {
+		log.Fatalln(err)
+		return []byte{}, err
+	}
+
+	//check the results
+	var data []byte
+	data, err = checkResults(currentTask, &taskCases, &taskArray)
+	if err != nil {
+		log.Fatalln(err)
+		return []byte{}, err
+	}
+
+	return data, nil
+}
+
+func getCases(currentTask string, taskCases *[]json.RawMessage) error {
 	// request to Solution
 	var reqAddr string
 	if debugFlag {
@@ -121,87 +177,22 @@ func processTask(currentTask string) ([]byte, error) {
 	resp, err := http.Get(reqAddr)
 	if err != nil {
 		log.Fatalln(err)
-		return []byte{}, err
+		return err
 	}
 	defer resp.Body.Close()
 
 	payload, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		log.Fatalln(err)
-		return []byte{}, err
+		return err
 	}
 
-	var taskCases []json.RawMessage
 	err = json.Unmarshal(payload, &taskCases)
 	if err != nil {
 		log.Fatalln(err)
-		return []byte{}, err
+		return err
 	}
-
-	taskArray := [10]taskElement{}
-
-	// solve
-	err = parseAndSolve(currentTask, taskCases, &taskArray)
-	if err != nil {
-		log.Fatalln(err)
-		return []byte{}, err
-	}
-
-	// marshaling results
-	var raw []byte
-	var rawArray []json.RawMessage
-
-	for _, element := range taskArray {
-		if currentTask == task1 {
-			raw, err = json.Marshal(element.result)
-		} else {
-			raw, err = json.Marshal(element.result[0])
-		}
-		if err != nil {
-			log.Fatalln(err)
-			return []byte{}, err
-		}
-		rawArray = append(rawArray, raw)
-	}
-
-	message := map[string]interface{}{
-		"user_name": userName,
-		"task":      currentTask,
-		"results": map[string]interface{}{
-			"payload": taskCases,
-			"results": rawArray,
-		},
-	}
-	bytesRepresentation, err := json.Marshal(message)
-	if err != nil {
-		log.Fatalln(err)
-		return []byte{}, err
-	}
-
-	// second request to Solution
-	if debugFlag {
-		reqAddr = "http://" + solutionAddr + "/test/"
-	} else {
-		reqAddr = "http://" + solutionAddr + "/tasks/solution"
-	}
-	resp2, err := http.Post(reqAddr, "application/json", bytes.NewBuffer(bytesRepresentation))
-	if err != nil {
-		log.Fatalln(err)
-		return []byte{}, err
-	}
-	defer resp2.Body.Close()
-
-	var data []byte
-	if resp2.StatusCode != http.StatusOK {
-		data = []byte("Solution response status: " + resp2.Status)
-	} else {
-		data, err = ioutil.ReadAll(resp2.Body)
-		if err != nil {
-			log.Fatalln(err)
-			return []byte{}, err
-		}
-	}
-	return data, nil
+	return nil
 }
 
 func parseAndSolve(currentTask string, taskCases []json.RawMessage, taskArray *[10]taskElement) error {
@@ -246,30 +237,62 @@ func parseAndSolve(currentTask string, taskCases []json.RawMessage, taskArray *[
 	return nil
 }
 
-func main() {
-	flag.StringVar(&solutionAddr, "addr", defSolutionAddr, "Net address of the server \"Solution\"")
-	flag.Parse()
-	if solutionAddr == "test" {
-		debugFlag = true
+func checkResults(currentTask string, taskCases *[]json.RawMessage, taskArray *[10]taskElement) ([]byte, error) {
+	// marshaling results
+	var raw []byte
+	var rawArray []json.RawMessage
+	var err error
 
+	for _, element := range taskArray {
+		if currentTask == task1 {
+			raw, err = json.Marshal(element.result)
+		} else {
+			raw, err = json.Marshal(element.result[0])
+		}
+		if err != nil {
+			log.Fatalln(err)
+			return []byte{}, err
+		}
+		rawArray = append(rawArray, raw)
 	}
-	if debugFlag {
-		solutionAddr = testSolutionAddr
-	}
-	fmt.Println("Solution server at: " + solutionAddr)
 
-	if debugFlag {
-		ctx := context.Background()
-		ctxTestServer, cancelTestServer := context.WithCancel(ctx)
-		defer cancelTestServer()
-		go testSolution.StartTestServer(ctxTestServer, testSolutionAddr)
+	message := map[string]interface{}{
+		"user_name": userName,
+		"task":      currentTask,
+		"results": map[string]interface{}{
+			"payload": taskCases,
+			"results": rawArray,
+		},
 	}
-
-	http.HandleFunc("/task/", tasksHandler)
-	http.HandleFunc("/tasks/", tasksHandler)
-	fmt.Println("Service is getting up")
-	err := http.ListenAndServe(port, nil)
+	bytesRepresentation, err := json.Marshal(message)
 	if err != nil {
-		panic(err)
+		log.Fatalln(err)
+		return []byte{}, err
 	}
+
+	// second request to Solution
+	var reqAddr string
+	if debugFlag {
+		reqAddr = "http://" + solutionAddr + "/test/"
+	} else {
+		reqAddr = "http://" + solutionAddr + "/tasks/solution"
+	}
+	resp2, err := http.Post(reqAddr, "application/json", bytes.NewBuffer(bytesRepresentation))
+	if err != nil {
+		log.Fatalln(err)
+		return []byte{}, err
+	}
+	defer resp2.Body.Close()
+
+	var data []byte
+	if resp2.StatusCode != http.StatusOK {
+		data = []byte("Solution response status: " + resp2.Status)
+	} else {
+		data, err = ioutil.ReadAll(resp2.Body)
+		if err != nil {
+			log.Fatalln(err)
+			return []byte{}, err
+		}
+	}
+	return data, nil
 }
