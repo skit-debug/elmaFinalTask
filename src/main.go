@@ -28,9 +28,9 @@ const (
 
 var solutionAddr string
 
-var debugFlag bool = false
+// var debugFlag bool = false
 
-// var debugFlag bool = true
+var debugFlag bool = true
 
 type taskElement struct {
 	a      []int
@@ -45,7 +45,47 @@ func tasksHandler(w http.ResponseWriter, req *http.Request) {
 	}
 	if req.URL.Path == "/tasks/" {
 		// Request all tasks
-		fmt.Fprintf(w, "GET received at /tasks/")
+		var answers = make([][]byte, 4)
+		var wg sync.WaitGroup
+		wg.Add(4)
+		go func() {
+			defer wg.Done()
+			var err error
+			answers[0], err = processTask(task1)
+			if err != nil {
+				log.Fatalln("Something went wrong")
+				return
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			var err error
+			answers[1], err = processTask(task2)
+			if err != nil {
+				log.Fatalln("Something went wrong")
+				return
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			var err error
+			answers[2], err = processTask(task3)
+			if err != nil {
+				log.Fatalln("Something went wrong")
+				return
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			var err error
+			answers[3], err = processTask(task4)
+			if err != nil {
+				log.Fatalln("Something went wrong")
+				return
+			}
+		}()
+		wg.Wait()
+		w.Write(bytes.Join(answers, []byte{}))
 
 	} else {
 		// Request "/task/<name>"
@@ -56,136 +96,144 @@ func tasksHandler(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		currentTask := pathParts[1]
-
-		if currentTask != task1 && currentTask != task2 && currentTask != task3 && currentTask != task4 {
+		if pathParts[1] != task1 && pathParts[1] != task2 && pathParts[1] != task3 && pathParts[1] != task4 {
 			http.Error(w, "unexpected task name", http.StatusBadRequest)
 		}
 
-		// request to Solution
-		var reqAddr string
-		if debugFlag {
-			reqAddr = "http://" + solutionAddr + "/test/" + currentTask
-		} else {
-			reqAddr = "http://" + solutionAddr + "/tasks/" + currentTask
-		}
-
-		resp, err := http.Get(reqAddr)
+		answer, err := processTask(pathParts[1])
 		if err != nil {
-			log.Fatalln(err)
+			log.Fatalln("Something went wrong")
 			return
 		}
-		defer req.Body.Close()
+		w.Write(answer)
+	}
+}
 
-		payload, err := ioutil.ReadAll(resp.Body)
+func processTask(currentTask string) ([]byte, error) {
+	// request to Solution
+	var reqAddr string
+	if debugFlag {
+		reqAddr = "http://" + solutionAddr + "/test/" + currentTask
+	} else {
+		reqAddr = "http://" + solutionAddr + "/tasks/" + currentTask
+	}
+
+	resp, err := http.Get(reqAddr)
+	if err != nil {
+		log.Fatalln(err)
+		return []byte{}, err
+	}
+	defer resp.Body.Close()
+
+	payload, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatalln(err)
+		return []byte{}, err
+	}
+
+	var taskCases []json.RawMessage
+	err = json.Unmarshal(payload, &taskCases)
+	if err != nil {
+		log.Fatalln(err)
+		return []byte{}, err
+	}
+
+	taskArray := [10]taskElement{}
+	var wg sync.WaitGroup
+	wg.Add(10)
+
+	for i, taskCase := range taskCases {
+		var arguments []json.RawMessage
+		err = json.Unmarshal(taskCase, &arguments)
 		if err != nil {
 			log.Fatalln(err)
+			return []byte{}, err
 		}
-
-		var taskCases []json.RawMessage
-		err = json.Unmarshal(payload, &taskCases)
-		if err != nil {
-			log.Fatalln(err)
-			return
-		}
-
-		taskArray := [10]taskElement{}
-		var wg sync.WaitGroup
-		wg.Add(10)
-
-		for i, taskCase := range taskCases {
-			var arguments []json.RawMessage
-			err = json.Unmarshal(taskCase, &arguments)
-			if err != nil {
-				log.Fatalln(err)
-				return
-			}
-			if currentTask == task1 {
-				// rotation task takes two args
-				json.Unmarshal(arguments[0], &taskArray[i].a)
-				json.Unmarshal(arguments[1], &taskArray[i].k)
-			} else {
-				err = json.Unmarshal(arguments[0], &taskArray[i].a)
-				if err != nil {
-					log.Fatalln(err)
-					return
-				}
-
-			}
-
-			// solve
-			go func(i int) {
-				defer wg.Done()
-				switch currentTask {
-				case task1:
-					taskArray[i].result = solver.Solution1(taskArray[i].a, taskArray[i].k)
-				case task2:
-					taskArray[i].result = append(taskArray[i].result, solver.Solution2(taskArray[i].a))
-				case task3:
-					taskArray[i].result = append(taskArray[i].result, solver.Solution3(taskArray[i].a))
-				case task4:
-					taskArray[i].result = append(taskArray[i].result, solver.Solution4(taskArray[i].a))
-				default:
-				}
-			}(i)
-		} // taskCases loop
-		wg.Wait()
-
-		// marshaling results
-		var raw []byte
-		var rawArray []json.RawMessage
-
-		for _, element := range taskArray {
-			if currentTask == task1 {
-				raw, err = json.Marshal(element.result)
-			} else {
-				raw, err = json.Marshal(element.result[0])
-			}
-			if err != nil {
-				log.Fatalln(err)
-			}
-			rawArray = append(rawArray, raw)
-		}
-		/*
-			results, err := json.Marshal(rawArray)
-			if err != nil {
-				log.Fatalln(err)
-			}*/
-
-		message := map[string]interface{}{
-			"user_name": userName,
-			"task":      currentTask,
-			"results": map[string]interface{}{
-				"payload": taskCases,
-				"results": rawArray,
-			},
-		}
-		bytesRepresentation, err := json.Marshal(message)
-		if err != nil {
-			log.Fatalln(err)
-		}
-
-		// second request to Solution
-		if debugFlag {
-			reqAddr = "http://" + solutionAddr + "/test/"
+		if currentTask == task1 {
+			// rotation task takes two args
+			json.Unmarshal(arguments[0], &taskArray[i].a)
+			json.Unmarshal(arguments[1], &taskArray[i].k)
 		} else {
-			reqAddr = "http://" + solutionAddr + "/tasks/solution"
-		}
-		resp2, err := http.Post(reqAddr, "application/json", bytes.NewBuffer(bytesRepresentation))
-		if err != nil {
-			log.Fatalln(err)
-		}
-
-		if resp2.StatusCode != http.StatusOK {
-			w.Write([]byte("Solution response status: " + resp2.Status))
-		} else {
-			data, err := ioutil.ReadAll(resp2.Body)
+			err = json.Unmarshal(arguments[0], &taskArray[i].a)
 			if err != nil {
 				log.Fatalln(err)
+				return []byte{}, err
 			}
-			w.Write(data)
+
+		}
+		// solve
+		go func(i int) {
+			defer wg.Done()
+			switch currentTask {
+			case task1:
+				taskArray[i].result = solver.Solution1(taskArray[i].a, taskArray[i].k)
+			case task2:
+				taskArray[i].result = append(taskArray[i].result, solver.Solution2(taskArray[i].a))
+			case task3:
+				taskArray[i].result = append(taskArray[i].result, solver.Solution3(taskArray[i].a))
+			case task4:
+				taskArray[i].result = append(taskArray[i].result, solver.Solution4(taskArray[i].a))
+			default:
+			}
+		}(i)
+	} // taskCases loop
+	wg.Wait()
+
+	// marshaling results
+	var raw []byte
+	var rawArray []json.RawMessage
+
+	for _, element := range taskArray {
+		if currentTask == task1 {
+			raw, err = json.Marshal(element.result)
+		} else {
+			raw, err = json.Marshal(element.result[0])
+		}
+		if err != nil {
+			log.Fatalln(err)
+			return []byte{}, err
+		}
+		rawArray = append(rawArray, raw)
+	}
+
+	message := map[string]interface{}{
+		"user_name": userName,
+		"task":      currentTask,
+		"results": map[string]interface{}{
+			"payload": taskCases,
+			"results": rawArray,
+		},
+	}
+	bytesRepresentation, err := json.Marshal(message)
+	if err != nil {
+		log.Fatalln(err)
+		return []byte{}, err
+	}
+
+	// second request to Solution
+	if debugFlag {
+		reqAddr = "http://" + solutionAddr + "/test/"
+	} else {
+		reqAddr = "http://" + solutionAddr + "/tasks/solution"
+	}
+	resp2, err := http.Post(reqAddr, "application/json", bytes.NewBuffer(bytesRepresentation))
+	if err != nil {
+		log.Fatalln(err)
+		return []byte{}, err
+	}
+	defer resp2.Body.Close()
+
+	var data []byte
+	if resp2.StatusCode != http.StatusOK {
+		data = []byte("Solution response status: " + resp2.Status)
+	} else {
+		data, err = ioutil.ReadAll(resp2.Body)
+		if err != nil {
+			log.Fatalln(err)
+			return []byte{}, err
 		}
 	}
+	return data, nil
 }
 
 func main() {
