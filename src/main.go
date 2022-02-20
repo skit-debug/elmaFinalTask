@@ -28,9 +28,9 @@ const (
 
 var solutionAddr string
 
-// var debugFlag bool = false
+var debugFlag bool = false
 
-var debugFlag bool = true
+// var debugFlag bool = true
 
 type taskElement struct {
 	a      []int
@@ -139,45 +139,13 @@ func processTask(currentTask string) ([]byte, error) {
 	}
 
 	taskArray := [10]taskElement{}
-	var wg sync.WaitGroup
-	wg.Add(10)
 
-	for i, taskCase := range taskCases {
-		var arguments []json.RawMessage
-		err = json.Unmarshal(taskCase, &arguments)
-		if err != nil {
-			log.Fatalln(err)
-			return []byte{}, err
-		}
-		if currentTask == task1 {
-			// rotation task takes two args
-			json.Unmarshal(arguments[0], &taskArray[i].a)
-			json.Unmarshal(arguments[1], &taskArray[i].k)
-		} else {
-			err = json.Unmarshal(arguments[0], &taskArray[i].a)
-			if err != nil {
-				log.Fatalln(err)
-				return []byte{}, err
-			}
-
-		}
-		// solve
-		go func(i int) {
-			defer wg.Done()
-			switch currentTask {
-			case task1:
-				taskArray[i].result = solver.Solution1(taskArray[i].a, taskArray[i].k)
-			case task2:
-				taskArray[i].result = append(taskArray[i].result, solver.Solution2(taskArray[i].a))
-			case task3:
-				taskArray[i].result = append(taskArray[i].result, solver.Solution3(taskArray[i].a))
-			case task4:
-				taskArray[i].result = append(taskArray[i].result, solver.Solution4(taskArray[i].a))
-			default:
-			}
-		}(i)
-	} // taskCases loop
-	wg.Wait()
+	// solve
+	err = parseAndSolve(currentTask, taskCases, &taskArray)
+	if err != nil {
+		log.Fatalln(err)
+		return []byte{}, err
+	}
 
 	// marshaling results
 	var raw []byte
@@ -234,6 +202,48 @@ func processTask(currentTask string) ([]byte, error) {
 		}
 	}
 	return data, nil
+}
+
+func parseAndSolve(currentTask string, taskCases []json.RawMessage, taskArray *[10]taskElement) error {
+	var wg sync.WaitGroup
+	wg.Add(10)
+
+	for i, taskCase := range taskCases {
+		var arguments []json.RawMessage
+		err := json.Unmarshal(taskCase, &arguments)
+		if err != nil {
+			log.Fatalln(err)
+			return err
+		}
+		if currentTask == task1 {
+			// rotation task takes two args
+			json.Unmarshal(arguments[0], &taskArray[i].a)
+			json.Unmarshal(arguments[1], &taskArray[i].k)
+		} else {
+			err = json.Unmarshal(arguments[0], &taskArray[i].a)
+			if err != nil {
+				log.Fatalln(err)
+				return err
+			}
+		}
+		// solve
+		go func(i int) {
+			defer wg.Done()
+			switch currentTask {
+			case task1:
+				taskArray[i].result = solver.Solution1(taskArray[i].a, taskArray[i].k)
+			case task2:
+				taskArray[i].result = append(taskArray[i].result, solver.Solution2(taskArray[i].a))
+			case task3:
+				taskArray[i].result = append(taskArray[i].result, solver.Solution3(taskArray[i].a))
+			case task4:
+				taskArray[i].result = append(taskArray[i].result, solver.Solution4(taskArray[i].a))
+			default:
+			}
+		}(i)
+	}
+	wg.Wait()
+	return nil
 }
 
 func main() {
